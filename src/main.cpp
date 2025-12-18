@@ -89,6 +89,12 @@ void setup() {
   // Publish device IP
   publishIP();
   
+  // Read initial sensor value and add to history
+  readAndPublishSensor();
+  
+  // Publish initial history immediately
+  publishHistory();
+  
   Serial.println("\nSetup complete! Starting main loop...\n");
 }
 
@@ -393,6 +399,8 @@ void publishHistory() {
   // Publish with retained flag
   if (mqttClient.publish(mqtt_topic_history, jsonStr.c_str(), true)) {
     Serial.println("✓ History published successfully (retained)");
+    // Reset timer so we don't publish again for 30 minutes
+    lastHistoryPublishTime = millis();
   } else {
     Serial.println("✗ History publish failed!");
   }
