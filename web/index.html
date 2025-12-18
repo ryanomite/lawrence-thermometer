@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lawrence Office Temperature Monitor</title>
+    <script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+
+        .temperature-display {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            margin: 30px 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .temperature-display::before {
+            content: '🌡️';
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 40px;
+            opacity: 0.3;
+        }
+
+        .temperature {
+            font-size: 72px;
+            font-weight: bold;
+            line-height: 1;
+            margin-bottom: 10px;
+        }
+
+        .temperature-label {
+            font-size: 18px;
+            opacity: 0.9;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px 0;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #4CAF50;
+        }
+
+        .status-dot.disconnected {
+            background: #f44336;
+            animation: none;
+        }
+
+        .status-dot.connecting {
+            background: #FFC107;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid #eee;
+        }
+
+        .info-item {
+            text-align: center;
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 16px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+
+        footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            font-size: 12px;
+            color: #999;
+        }
+
+        footer a {
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏢 Lawrence Office</h1>
+        <div class="subtitle">Temperature Monitor</div>
+
+        <div class="status-indicator">
+            <div class="status-dot connecting" id="statusDot"></div>
+            <span id="statusText">Connecting to MQTT...</span>
+        </div>
+
+        <div class="temperature-display">
+            <div class="temperature" id="temperature">
+                <span class="loading">--.-</span>
+            </div>
+            <div class="temperature-label">Degrees Fahrenheit</div>
+        </div>
+
+        <div class="info-grid">
+            <div class="info-item">
+                <div class="info-label">Last Updated</div>
+                <div class="info-value" id="lastUpdate">Never</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Device IP</div>
+                <div class="info-value" id="deviceIP">Unknown</div>
+            </div>
+        </div>
+
+        <footer>
+            Powered by <a href="https://www.hivemq.com/" target="_blank">HiveMQ</a> MQTT Broker
+            <br>
+            <small>Topic: adc-lawrence/temperature</small>
+        </footer>
+    </div>
+
+    <script>
+        // MQTT Configuration
+        const MQTT_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+        const TOPIC_TEMP = 'adc-lawrence/temperature';
+        const TOPIC_IP = 'adc-lawrence/ip';
+
+        // UI Elements
+        const temperatureEl = document.getElementById('temperature');
+        const statusDotEl = document.getElementById('statusDot');
+        const statusTextEl = document.getElementById('statusText');
+        const lastUpdateEl = document.getElementById('lastUpdate');
+        const deviceIPEl = document.getElementById('deviceIP');
+
+        // State
+        let lastUpdateTime = null;
+
+        // Connect to MQTT broker
+        console.log('Connecting to HiveMQ broker via WebSocket...');
+        const client = mqtt.connect(MQTT_BROKER, {
+            clientId: 'lawrence-web-' + Math.random().toString(16).substr(2, 8),
+            clean: true,
+            reconnectPeriod: 5000,
+        });
+
+        // Connection established
+        client.on('connect', () => {
+            console.log('Connected to MQTT broker');
+            updateStatus('connected', 'Connected');
+            
+            // Subscribe to topics
+            client.subscribe([TOPIC_TEMP, TOPIC_IP], (err) => {
+                if (err) {
+                    console.error('Subscription error:', err);
+                    updateStatus('disconnected', 'Subscription failed');
+                } else {
+                    console.log('Subscribed to topics:', TOPIC_TEMP, TOPIC_IP);
+                }
+            });
+        });
+
+        // Message received
+        client.on('message', (topic, message) => {
+            const payload = message.toString();
+            console.log(`Received message on ${topic}:`, payload);
+
+            if (topic === TOPIC_TEMP) {
+                updateTemperature(payload);
+            } else if (topic === TOPIC_IP) {
+                updateDeviceIP(payload);
+            }
+        });
+
+        // Connection errors
+        client.on('error', (err) => {
+            console.error('MQTT error:', err);
+            updateStatus('disconnected', 'Connection error');
+        });
+
+        // Disconnected
+        client.on('close', () => {
+            console.log('Disconnected from MQTT broker');
+            updateStatus('disconnected', 'Disconnected');
+        });
+
+        // Reconnecting
+        client.on('reconnect', () => {
+            console.log('Reconnecting to MQTT broker...');
+            updateStatus('connecting', 'Reconnecting...');
+        });
+
+        // Update temperature display
+        function updateTemperature(temp) {
+            const tempValue = parseFloat(temp);
+            
+            if (isNaN(tempValue)) {
+                temperatureEl.innerHTML = '<span class="loading">Error</span>';
+                return;
+            }
+
+            // Format temperature with 1 decimal place
+            temperatureEl.textContent = tempValue.toFixed(1) + '°';
+            
+            // Update last update time
+            lastUpdateTime = new Date();
+            updateLastUpdateDisplay();
+            
+            // Start interval to update "time ago" display
+            if (!window.updateInterval) {
+                window.updateInterval = setInterval(updateLastUpdateDisplay, 1000);
+            }
+        }
+
+        // Update device IP display
+        function updateDeviceIP(ip) {
+            deviceIPEl.textContent = ip;
+        }
+
+        // Update status indicator
+        function updateStatus(status, text) {
+            statusDotEl.className = 'status-dot ' + status;
+            statusTextEl.textContent = text;
+        }
+
+        // Update "last updated" display
+        function updateLastUpdateDisplay() {
+            if (!lastUpdateTime) {
+                lastUpdateEl.textContent = 'Never';
+                return;
+            }
+
+            const now = new Date();
+            const diffSeconds = Math.floor((now - lastUpdateTime) / 1000);
+
+            if (diffSeconds < 60) {
+                lastUpdateEl.textContent = diffSeconds + 's ago';
+            } else if (diffSeconds < 3600) {
+                const minutes = Math.floor(diffSeconds / 60);
+                lastUpdateEl.textContent = minutes + 'm ago';
+            } else {
+                const hours = Math.floor(diffSeconds / 3600);
+                lastUpdateEl.textContent = hours + 'h ago';
+            }
+        }
+    </script>
+</body>
+</html>
