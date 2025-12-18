@@ -29,7 +29,8 @@ ESP8266WebServer webServer(80);
 float lastTemperature = -999.0;
 unsigned long lastReadTime = 0;
 const unsigned long READ_INTERVAL = 30000; // 30 seconds
-const unsigned long HISTORY_INTERVAL = 30 * 60 * 1000; // 30 minutes
+const unsigned long HISTORY_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
+const unsigned long HISTORY_INTERVAL_SEC = 30 * 60; // 30 minutes in seconds
 unsigned long lastHistoryPublishTime = 0;
 
 // Temperature history: 3 days * 24 hours * 2 readings per hour = 144 readings max
@@ -118,22 +119,22 @@ void loop() {
     connectMQTT();
   }
   mqttClient.loop();
-  
+
   // Handle OTA updates
   ArduinoOTA.handle();
-  
+
   // Handle web requests
   webServer.handleClient();
-  
+
   // Read sensor at intervals
   unsigned long currentTime = millis();
   if (currentTime - lastReadTime >= READ_INTERVAL) {
     lastReadTime = currentTime;
     readAndPublishSensor();
   }
-  
+
   // Publish history every 30 minutes
-  if (currentTime - lastHistoryPublishTime >= HISTORY_INTERVAL) {
+  if (currentTime - lastHistoryPublishTime >= HISTORY_INTERVAL_MS) {
     lastHistoryPublishTime = currentTime;
     publishHistory();
   }
@@ -362,7 +363,9 @@ void addToHistory(float temperature) {
   int tempInt = round(temperature); // Round to nearest integer
   
   // Check if we should add to history (at least 30 min interval)
-  if (historyCount == 0 || (now - history[historyIndex].timestamp) >= HISTORY_INTERVAL) {
+  // Note: 'now' is time_t in seconds, so use HISTORY_INTERVAL_SEC
+  int lastIdx = (historyIndex - 1 + HISTORY_SIZE) % HISTORY_SIZE;
+  if (historyCount == 0 || (now - history[lastIdx].timestamp) >= HISTORY_INTERVAL_SEC) {
     // Add new entry
     history[historyIndex].timestamp = now;
     history[historyIndex].temperature = tempInt;
@@ -413,8 +416,6 @@ void publishHistory() {
   // Publish with retained flag
   if (mqttClient.publish(mqtt_topic_history, jsonStr.c_str(), true)) {
     Serial.println("✓ History published successfully (retained)");
-    // Reset timer so we don't publish again for 30 minutes
-    lastHistoryPublishTime = millis();
   } else {
     Serial.println("✗ History publish failed!");
   }
