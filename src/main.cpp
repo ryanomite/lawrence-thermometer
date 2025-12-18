@@ -52,6 +52,7 @@ void setupOTA();
 void syncNTP();
 void addToHistory(float temperature);
 void publishHistory();
+void mqttMessageCallback(char* topic, byte* payload, unsigned int length);
 
 void setup() {
   Serial.begin(115200);
@@ -73,6 +74,7 @@ void setup() {
   
   // Configure MQTT
   mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setCallback(mqttMessageCallback);
   Serial.println("MQTT configured for broker.hivemq.com");
   
   // Setup OTA updates
@@ -85,6 +87,18 @@ void setup() {
   
   // Initial connection
   connectMQTT();
+  
+  // Attempt to backfill history from retained MQTT message (fault tolerant)
+  Serial.println("Subscribing to retained temperature history for backfill...");
+  mqttClient.subscribe(mqtt_topic_history);
+  {
+    unsigned long start = millis();
+    // Process incoming messages briefly to catch retained history, then move on
+    while (millis() - start < 2000) {
+      mqttClient.loop();
+      delay(10);
+    }
+  }
   
   // Publish device IP
   publishIP();
@@ -406,4 +420,65 @@ void publishHistory() {
   }
   
   Serial.println();
+}
+
+// MQTT message callback: backfill temperature history from retained payload
+void mqttMessageCallback(char* topic, byte* payload, unsigned int length) {
+  if (strcmp(topic, mqtt_topic_history) != 0) {
+    return; // Only handling history backfill here
+  }
+
+  Serial.println("\nReceived retained temperature-history payload, attempting backfill...");
+  if (length == 0) {
+    Serial.println("History payload empty; skipping backfill.");
+    return;
+  }
+
+  // Construct String from payload (not null-terminated)
+  String msg;
+  msg.reserve(length);
+  for (unsigned int i = 0; i < length; i++) {
+    msg += (char)payload[i];
+  }
+  
+  // Expect format: {timestamp:temp,timestamp:temp}
+  if (!(msg.startsWith("{") && msg.endsWith("}"))) {
+    Serial.println("History payload malformed; skipping backfill.");
+    return;
+  }
+
+  // Reset current history buffer
+  historyIndex = 0;
+  historyCount = 0;
+
+  String body = msg.substring(1, msg.length() - 1);
+  int pos = 0;
+  int ingested = 0;
+  
+  while (pos < body.length()) {
+    int comma = body.indexOf(',', pos);
+    String pair = (comma == -1) ? body.substring(pos) : body.substring(pos, comma);
+    int colon = pair.indexOf(':');
+    if (colon > 0) {
+      String tsStr = pair.substring(0, colon);
+      String tempStr = pair.substring(colon + 1);
+      long ts = tsStr.toInt();
+      int temp = tempStr.toInt();
+      if (ts > 0) {
+        // Push into ring buffer (keep max HISTORY_SIZE entries)
+        history[historyIndex].timestamp = (time_t)ts;
+        history[historyIndex].temperature = temp;
+        historyIndex = (historyIndex + 1) % HISTORY_SIZE;
+        if (historyCount < HISTORY_SIZE) historyCount++;
+        ingested++;
+      }
+    }
+    pos = (comma == -1) ? body.length() : (comma + 1);
+  }
+
+  Serial.print("Backfill complete. Ingested entries: ");
+  Serial.print(ingested);
+  Serial.print(" (historyCount now ");
+  Serial.print(historyCount);
+  Serial.println(")\n");
 }
