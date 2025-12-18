@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ArduinoOTA.h>
+#include <time.h>
 #include <PubSubClient.h>
 #include <DHT.h>
 #include "../credentials.h"
@@ -15,6 +17,7 @@ const char* mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
 const char* mqtt_topic_temp = "adc-lawrence/temperature";
 const char* mqtt_topic_ip = "adc-lawrence/ip";
+const char* mqtt_topic_history = "adc-lawrence/temperature-history";
 const char* device_name = "Lawrence Office Thermometer";
 
 // WiFi and MQTT clients
@@ -26,6 +29,18 @@ ESP8266WebServer webServer(80);
 float lastTemperature = -999.0;
 unsigned long lastReadTime = 0;
 const unsigned long READ_INTERVAL = 30000; // 30 seconds
+const unsigned long HISTORY_INTERVAL = 30 * 60 * 1000; // 30 minutes
+unsigned long lastHistoryPublishTime = 0;
+
+// Temperature history: 3 days * 24 hours * 2 readings per hour = 144 readings max
+const int HISTORY_SIZE = 288; // 3 days * 24 * 4 (one every 15min for safety)
+struct HistoryEntry {
+  time_t timestamp;
+  int temperature; // Rounded to nearest integer
+};
+HistoryEntry history[HISTORY_SIZE];
+int historyIndex = 0;
+int historyCount = 0;
 
 // Function declarations
 void setupWiFi();
@@ -33,6 +48,10 @@ void connectMQTT();
 void readAndPublishSensor();
 void handleRoot();
 void publishIP();
+void setupOTA();
+void syncNTP();
+void addToHistory(float temperature);
+void publishHistory();
 
 void setup() {
   Serial.begin(115200);
@@ -49,9 +68,15 @@ void setup() {
   // Setup WiFi with WiFiManager
   setupWiFi();
   
+  // Sync time from NTP
+  syncNTP();
+  
   // Configure MQTT
   mqttClient.setServer(mqtt_server, mqtt_port);
   Serial.println("MQTT configured for broker.hivemq.com");
+  
+  // Setup OTA updates
+  setupOTA();
   
   // Setup web server
   webServer.on("/", handleRoot);
@@ -74,6 +99,9 @@ void loop() {
   }
   mqttClient.loop();
   
+  // Handle OTA updates
+  ArduinoOTA.handle();
+  
   // Handle web requests
   webServer.handleClient();
   
@@ -82,6 +110,12 @@ void loop() {
   if (currentTime - lastReadTime >= READ_INTERVAL) {
     lastReadTime = currentTime;
     readAndPublishSensor();
+  }
+  
+  // Publish history every 30 minutes
+  if (currentTime - lastHistoryPublishTime >= HISTORY_INTERVAL) {
+    lastHistoryPublishTime = currentTime;
+    publishHistory();
   }
 }
 
@@ -160,6 +194,9 @@ void readAndPublishSensor() {
   Serial.print(humidity);
   Serial.println(" %");
   
+  // Add to history regardless of whether it changed
+  addToHistory(tempF);
+  
   // Only publish if temperature has changed
   if (tempF != lastTemperature) {
     Serial.print("Temperature changed! Publishing to MQTT: ");
@@ -215,7 +252,7 @@ void handleRoot() {
   html += ".status-ok { background: #4CAF50; }";
   html += ".status-error { background: #f44336; }";
   html += "</style>";
-  html += "<script>setTimeout(function(){ location.reload(); }, 30000);</script>"; // Auto-refresh every 30s
+  html += "<script>setTimeout(function(){ location.reload(); }, 30000);</script>";
   html += "</head><body>";
   html += "<div class='container'>";
   html += "<h1>🌡️ Lawrence Office Thermometer</h1>";
@@ -237,8 +274,128 @@ void handleRoot() {
   html += "<div class='info-row'><strong>WiFi Signal:</strong> " + String(WiFi.RSSI()) + " dBm</div>";
   html += "<div class='info-row'><strong>MQTT Status:</strong> " + String(mqttClient.connected() ? "Connected" : "Disconnected") + "</div>";
   html += "<div class='info-row'><strong>Uptime:</strong> " + String(millis() / 1000) + " seconds</div>";
+  html += "<div class='info-row'><strong>History Entries:</strong> " + String(historyCount) + "</div>";
   html += "<div class='info-row' style='margin-top: 15px; font-size: 12px; color: #999;'>Page auto-refreshes every 30 seconds</div>";
   html += "</div></div></body></html>";
   
   webServer.send(200, "text/html", html);
+}
+
+void setupOTA() {
+  ArduinoOTA.setHostname("lawrence-thermometer");
+  
+  ArduinoOTA.onStart([]() {
+    Serial.println("OTA Update starting...");
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nOTA Update complete!");
+  });
+  
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("OTA Progress: %u%%\r", (progress / (total / 100)));
+  });
+  
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("OTA Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  
+  ArduinoOTA.begin();
+  Serial.println("OTA updates enabled");
+}
+
+void syncNTP() {
+  Serial.println("Syncing time from NTP server...");
+  
+  // Set timezone to GMT
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  
+  // Wait for time to be set
+  time_t now = time(nullptr);
+  int attempts = 0;
+  while (now < 24 * 3600 && attempts < 30) {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+    attempts++;
+  }
+  
+  Serial.println();
+  
+  if (now > 24 * 3600) {
+    struct tm timeinfo = *gmtime(&now);
+    Serial.print("NTP time synced: ");
+    Serial.println(asctime(&timeinfo));
+  } else {
+    Serial.println("WARNING: NTP sync failed, using default time");
+  }
+}
+
+void addToHistory(float temperature) {
+  // Get current time
+  time_t now = time(nullptr);
+  int tempInt = round(temperature); // Round to nearest integer
+  
+  // Check if we should add to history (at least 30 min interval)
+  if (historyCount == 0 || (now - history[historyIndex].timestamp) >= HISTORY_INTERVAL) {
+    // Add new entry
+    history[historyIndex].timestamp = now;
+    history[historyIndex].temperature = tempInt;
+    
+    historyIndex = (historyIndex + 1) % HISTORY_SIZE;
+    if (historyCount < HISTORY_SIZE) {
+      historyCount++;
+    }
+    
+    Serial.print("Added to history: ");
+    Serial.print(tempInt);
+    Serial.print("°F at timestamp ");
+    Serial.print(now);
+    Serial.print(" (total entries: ");
+    Serial.print(historyCount);
+    Serial.println(")");
+  }
+}
+
+void publishHistory() {
+  if (historyCount == 0) {
+    Serial.println("No history to publish");
+    return;
+  }
+  
+  Serial.println("Publishing temperature history to MQTT...");
+  
+  // Build JSON string without quotes around keys/values (as requested)
+  String jsonStr = "{";
+  
+  for (int i = 0; i < historyCount; i++) {
+    int idx = (historyIndex - historyCount + i + HISTORY_SIZE) % HISTORY_SIZE;
+    jsonStr += String(history[idx].timestamp);
+    jsonStr += ":";
+    jsonStr += String(history[idx].temperature);
+    
+    if (i < historyCount - 1) {
+      jsonStr += ",";
+    }
+  }
+  
+  jsonStr += "}";
+  
+  Serial.print("History JSON length: ");
+  Serial.print(jsonStr.length());
+  Serial.println(" bytes");
+  
+  // Publish with retained flag
+  if (mqttClient.publish(mqtt_topic_history, jsonStr.c_str(), true)) {
+    Serial.println("✓ History published successfully (retained)");
+  } else {
+    Serial.println("✗ History publish failed!");
+  }
+  
+  Serial.println();
 }

@@ -1,16 +1,20 @@
 # Lawrence Office Thermometer
 
-ESP8266 (D1 Mini) firmware for monitoring temperature and humidity in the Lawrence office. Reads DHT11 sensor data, publishes to MQTT, and provides both local and public web interfaces.
+ESP8266 (D1 Mini) firmware for monitoring temperature and humidity in the Lawrence office. Reads DHT11 sensor data, publishes to MQTT, maintains 3-day historical data, and provides both local and public web interfaces with real-time graphing.
 
-## Features
+## Features (v2.0.0)
 
 - **DHT11 Temperature/Humidity Sensor** on pin D7
 - **Temperature in Fahrenheit** with 1 decimal precision
-- **WiFi Connectivity** with automatic fallback AP and captive portal
+- **WiFi Connectivity** with automatic reconnection
 - **MQTT Publishing** to public HiveMQ broker (retained messages)
+- **Temperature History** - 3 days of data, published at 30-minute intervals
+- **OTA Firmware Updates** - Update via PlatformIO without USB cable
+- **NTP Time Sync** - Automatic UTC time synchronization on boot
 - **Local Web Interface** for diagnostics
-- **Public Web Dashboard** accessible anywhere
+- **Public Web Dashboard** with real-time temperature graph
 - **Smart Publishing** - only publishes on temperature change
+- **Graph Visualization** - Chart.js graph showing up to 3 days of history
 
 ## Hardware Setup
 
@@ -112,6 +116,12 @@ The page:
   - **Retained**: Yes
   - **Frequency**: Once on boot
 
+- **Topic**: `adc-lawrence/temperature-history`
+  - **Payload**: JSON object {timestamp:temp,timestamp:temp} (no quotes, Unix timestamps, integer temps)
+  - **Retained**: Yes
+  - **Frequency**: Every 30 minutes
+  - **Example**: `{1703001600:72,1703003400:71,1703005200:73}`
+
 ### Broker
 - **Host**: `broker.hivemq.com`
 - **Port**: 1883 (MQTT) / 8884 (WebSocket)
@@ -192,11 +202,13 @@ const char* device_name = "Lawrence Office Thermometer";
 - **DHT sensor library** (1.4.4) - DHT11/DHT22 sensor support
 - **Adafruit Unified Sensor** (1.1.14) - Sensor abstraction layer
 - **PubSubClient** (2.8) - MQTT client library
+- **ArduinoOTA** (1.0) - Over-the-air firmware updates
+- **Chart.js** (4.4.0) - JavaScript graphing library (CDN)
 
 ## Memory Usage
 
-- **RAM**: 36.9% (30,256 / 81,920 bytes)
-- **Flash**: 28.7% (299,624 / 1,044,464 bytes)
+- **RAM**: 41.6% (34,092 / 81,920 bytes)
+- **Flash**: 32.5% (339,704 / 1,044,464 bytes)
 
 ## License
 
