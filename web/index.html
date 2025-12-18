@@ -320,7 +320,7 @@
                 pairs.forEach(pair => {
                     const [timestampStr, tempStr] = pair.split(':');
                     const timestamp = parseInt(timestampStr);
-                    const temp = parseInt(tempStr);
+                    const temp = parseFloat(tempStr);
                     
                     if (!isNaN(timestamp) && !isNaN(temp)) {
                         temperatureData.push({
@@ -386,8 +386,8 @@
                     }
                 }
 
-                minTempEl.textContent = min24h + '°';
-                maxTempEl.textContent = max24h + '°';
+                minTempEl.textContent = min24h.toFixed(1) + '°';
+                maxTempEl.textContent = max24h.toFixed(1) + '°';
             }
         }
 

@@ -37,7 +37,7 @@ unsigned long lastHistoryPublishTime = 0;
 const int HISTORY_SIZE = 288; // 3 days * 24 * 4 (one every 15min for safety)
 struct HistoryEntry {
   time_t timestamp;
-  int temperature; // Rounded to nearest integer
+  float temperature; // Temperature with 1 decimal precision
 };
 HistoryEntry history[HISTORY_SIZE];
 int historyIndex = 0;
@@ -360,7 +360,7 @@ void syncNTP() {
 void addToHistory(float temperature) {
   // Get current time
   time_t now = time(nullptr);
-  int tempInt = round(temperature); // Round to nearest integer
+  float tempRounded = round(temperature * 10.0) / 10.0; // Round to 1 decimal place
   
   // Check if we should add to history (at least 30 min interval)
   // Note: 'now' is time_t in seconds, so use HISTORY_INTERVAL_SEC
@@ -368,7 +368,7 @@ void addToHistory(float temperature) {
   if (historyCount == 0 || (now - history[lastIdx].timestamp) >= HISTORY_INTERVAL_SEC) {
     // Add new entry
     history[historyIndex].timestamp = now;
-    history[historyIndex].temperature = tempInt;
+    history[historyIndex].temperature = tempRounded;
     
     historyIndex = (historyIndex + 1) % HISTORY_SIZE;
     if (historyCount < HISTORY_SIZE) {
@@ -376,7 +376,7 @@ void addToHistory(float temperature) {
     }
     
     Serial.print("Added to history: ");
-    Serial.print(tempInt);
+    Serial.print(tempRounded, 1);
     Serial.print("°F at timestamp ");
     Serial.print(now);
     Serial.print(" (total entries: ");
@@ -400,7 +400,7 @@ void publishHistory() {
     int idx = (historyIndex - historyCount + i + HISTORY_SIZE) % HISTORY_SIZE;
     jsonStr += String(history[idx].timestamp);
     jsonStr += ":";
-    jsonStr += String(history[idx].temperature);
+    jsonStr += String(history[idx].temperature, 1); // 1 decimal place
     
     if (i < historyCount - 1) {
       jsonStr += ",";
@@ -464,7 +464,7 @@ void mqttMessageCallback(char* topic, byte* payload, unsigned int length) {
       String tsStr = pair.substring(0, colon);
       String tempStr = pair.substring(colon + 1);
       long ts = tsStr.toInt();
-      int temp = tempStr.toInt();
+      float temp = tempStr.toFloat();
       if (ts > 0) {
         // Push into ring buffer (keep max HISTORY_SIZE entries)
         history[historyIndex].timestamp = (time_t)ts;
