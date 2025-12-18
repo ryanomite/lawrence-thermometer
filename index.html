@@ -55,15 +55,6 @@
             overflow: hidden;
         }
 
-        .temperature-display::before {
-            content: '🌡️';
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            font-size: 40px;
-            opacity: 0.3;
-        }
-
         .temperature {
             font-size: 72px;
             font-weight: bold;
@@ -207,7 +198,6 @@
             <div class="temperature" id="temperature">
                 <span class="loading">--.-</span>
             </div>
-            <div class="temperature-label">Degrees Fahrenheit</div>
         </div>
 
         <div class="chart-container">
@@ -260,6 +250,7 @@
         let lastUpdateTime = null;
         let chart = null;
         let temperatureData = [];
+        let latestTempRounded = null;
 
         // Initialize Chart.js
         function initChart() {
@@ -319,7 +310,7 @@
                 pairs.forEach(pair => {
                     const [timestampStr, tempStr] = pair.split(':');
                     const timestamp = parseInt(timestampStr);
-                    const temp = parseInt(tempStr);
+                    const temp = parseFloat(tempStr);
                     
                     if (!isNaN(timestamp) && !isNaN(temp)) {
                         temperatureData.push({
@@ -361,17 +352,32 @@
             chart.data.datasets[0].data = temps;
             chart.update();
             
-            // Update min/max for last 24 hours
+            // Update min/max display
+            updateMinMaxDisplay();
+        }
+
+        // Update min/max for last 24 hours with latest-temp override
+        function updateMinMaxDisplay() {
             const oneDayAgo = (Date.now() / 1000) - (24 * 3600);
             const last24h = temperatureData.filter(d => d.timestamp >= oneDayAgo);
             
             if (last24h.length > 0) {
                 const temps24h = last24h.map(d => d.temperature);
-                const min24h = Math.min(...temps24h);
-                const max24h = Math.max(...temps24h);
-                
-                minTempEl.textContent = min24h + '°';
-                maxTempEl.textContent = max24h + '°';
+                let min24h = Math.min(...temps24h);
+                let max24h = Math.max(...temps24h);
+
+                // If latest temperature (rounded) exceeds min/max, display that value
+                if (latestTempRounded !== null) {
+                    if (latestTempRounded < min24h) {
+                        min24h = latestTempRounded;
+                    }
+                    if (latestTempRounded > max24h) {
+                        max24h = latestTempRounded;
+                    }
+                }
+
+                minTempEl.textContent = min24h.toFixed(1) + '°';
+                maxTempEl.textContent = max24h.toFixed(1) + '°';
             }
         }
 
@@ -442,6 +448,9 @@
 
             // Format temperature with 1 decimal place
             temperatureEl.textContent = tempValue.toFixed(1) + '°';
+
+            // Track latest rounded temperature for min/max override
+            latestTempRounded = Math.round(tempValue);
             
             // Update last update time
             lastUpdateTime = new Date();
@@ -451,6 +460,9 @@
             if (!window.updateInterval) {
                 window.updateInterval = setInterval(updateLastUpdateDisplay, 1000);
             }
+
+            // Update min/max in case history hasn't changed
+            updateMinMaxDisplay();
         }
 
         // Update device IP display
