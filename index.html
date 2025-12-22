@@ -210,7 +210,7 @@
                 <div class="info-value" id="lastUpdate">Never</div>
             </div>
             <div class="info-item">
-                <div class="info-label">Device IP</div>
+                <div class="info-label">Device IP (sliderule)</div>
                 <div class="info-value" id="deviceIP">Unknown</div>
             </div>
             <div class="info-item">
@@ -467,7 +467,7 @@
 
         // Update device IP display
         function updateDeviceIP(ip) {
-            deviceIPEl.textContent = ip;
+            deviceIPEl.innerHTML = '<a href="http://' + ip + '/" target="_blank" style="color: #333; text-decoration: none; border-bottom: 1px dotted #999;">' + ip + '</a>';
         }
 
         // Update status indicator
