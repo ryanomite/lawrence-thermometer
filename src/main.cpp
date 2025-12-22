@@ -48,6 +48,7 @@ void setupWiFi();
 void connectMQTT();
 void readAndPublishSensor();
 void handleRoot();
+void handleRestart();
 void publishIP();
 void setupOTA();
 void syncNTP();
@@ -75,6 +76,7 @@ void setup() {
   
   // Configure MQTT
   mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setBufferSize(4096); // Increase from default 256 bytes for history publishing
   mqttClient.setCallback(mqttMessageCallback);
   Serial.println("MQTT configured for broker.hivemq.com");
   
@@ -83,6 +85,7 @@ void setup() {
   
   // Setup web server
   webServer.on("/", handleRoot);
+  webServer.on("/restart", handleRestart);
   webServer.begin();
   Serial.println("Web server started on port 80");
   
@@ -300,6 +303,27 @@ void handleRoot() {
   html += "</div></div></body></html>";
   
   webServer.send(200, "text/html", html);
+}
+
+void handleRestart() {
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<title>Restarting...</title>";
+  html += "<style>";
+  html += "body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f0f0f0; text-align: center; }";
+  html += "h1 { color: #333; }";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<h1>🔄 Restarting Device</h1>";
+  html += "<p>The device will restart in a moment...</p>";
+  html += "<p>Please wait 10-15 seconds before reconnecting.</p>";
+  html += "</body></html>";
+  
+  webServer.send(200, "text/html", html);
+  
+  Serial.println("\n*** RESTART REQUESTED VIA WEB ENDPOINT ***");
+  delay(500); // Give time for response to send
+  ESP.restart();
 }
 
 void setupOTA() {
